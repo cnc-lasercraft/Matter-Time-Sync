@@ -30,3 +30,4 @@ TIME_SYNC_CLUSTER_ID = 0x0038  # Time Synchronization Cluster (56 decimal)
 # Service names
 SERVICE_SYNC_TIME = "sync_time"
 SERVICE_SYNC_ALL = "sync_all"
+SERVICE_REFRESH_DEVICES = "refresh_devices"
