@@ -270,19 +270,18 @@ class MatterTimeSyncCoordinator:
         # Total UTC offset in seconds (includes DST when applicable)
         total_offset = int(now.utcoffset().total_seconds()) if now.utcoffset() else 0
 
-        # DST offset in seconds (0 when not in DST)
-        dst_offset = int(now.dst().total_seconds()) if now.dst() else 0
-
-        # SOLUTION 1: Use full total_offset for SetTimeZone. 
-        # This ensures the device gets the correct wall-clock time offset 
-        # even if it ignores the separate SetDSTOffset command.
+        # FORCE DST TO 0
+        # We merge the DST offset into the main timezone offset.
+        # This prevents "double counting" on devices that support DST,
+        # and prevents "lag" on devices that ignore the DST command.
         utc_offset = total_offset
+        dst_offset = 0
 
         # UTC time in microseconds since epoch
         utc_microseconds = int(utc_now.timestamp() * 1_000_000)
 
         _LOGGER.info(
-            "Syncing time for node %s: local=%s, UTC=%s, offset=%ds, DST=%ds",
+            "Syncing time for node %s: local=%s, UTC=%s, offset=%ds, DST=%ds (forced to 0)",
             node_id,
             now.isoformat(),
             utc_now.isoformat(),
@@ -311,9 +310,11 @@ class MatterTimeSyncCoordinator:
 
         _LOGGER.debug("SetUTCTime successful for node %s", node_id)
 
+        # DELAY 1: Allow device to process UTC time update
         await asyncio.sleep(1.0)
 
         # 2. Set Timezone
+        # We send the FULL offset (standard + DST) here, and tell the device the DST offset is 0 later.
         tz_response = await self._async_send_command(
             "device_command",
             {
@@ -366,13 +367,15 @@ class MatterTimeSyncCoordinator:
             else:
                 _LOGGER.warning("SetTimeZone completely failed for node %s", node_id)
 
-        await asyncio.sleep(1.0)
+        # DELAY 2: Allow device to process TimeZone update
+        await asyncio.sleep(0.5)
 
-        # 3. Set DST Offset (optional, some devices don't support it)
+        # 3. Set DST Offset (forced to 0)
         # Use a far-future timestamp for validUntil instead of 0
         far_future_us = int(
             (utc_now.timestamp() + 365 * 24 * 3600) * 1_000_000
         )  # 1 year from now
+        
         dst_response = await self._async_send_command(
             "device_command",
             {
@@ -383,7 +386,7 @@ class MatterTimeSyncCoordinator:
                 "payload": {
                     "DSTOffset": [
                         {
-                            "offset": dst_offset,
+                            "offset": dst_offset,  # Always 0
                             "validStarting": 0,
                             "validUntil": far_future_us,
                         }
@@ -394,7 +397,7 @@ class MatterTimeSyncCoordinator:
 
         if dst_response:
             _LOGGER.debug(
-                "SetDSTOffset successful for node %s (DST=%d)", node_id, dst_offset
+                "SetDSTOffset (0) successful for node %s", node_id
             )
         else:
             _LOGGER.debug(
