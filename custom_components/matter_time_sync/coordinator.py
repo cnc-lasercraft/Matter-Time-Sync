@@ -297,7 +297,7 @@ class MatterTimeSyncCoordinator:
                 "cluster_id": TIME_SYNC_CLUSTER_ID,
                 "command_name": "SetUTCTime",
                 "payload": {
-                    "utcTime": utc_microseconds,
+                    "UTCTime": utc_microseconds,
                     "granularity": 3,
                 },
             },
@@ -375,7 +375,7 @@ class MatterTimeSyncCoordinator:
                 "cluster_id": TIME_SYNC_CLUSTER_ID,
                 "command_name": "SetDSTOffset",
                 "payload": {
-                    "dstOffset": [
+                    "DSTOffset": [
                         {
                             "offset": dst_offset,
                             "validStarting": 0,
