@@ -368,7 +368,7 @@ class MatterTimeSyncCoordinator:
                 _LOGGER.warning("SetTimeZone completely failed for node %s", node_id)
 
         # DELAY 2: Allow device to process TimeZone update
-        await asyncio.sleep(0.5)
+        await asyncio.sleep(1.0)
 
         # 3. Set DST Offset (forced to 0)
         # Use a far-future timestamp for validUntil instead of 0
