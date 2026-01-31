@@ -241,6 +241,9 @@ logger:
 
 ## 📋 Version History
 
+### v2.0.1
+- Fixed DST Offset
+
 ### v2.0.0
 - Added automatic device discovery during auto-sync
 - Added Time Sync cluster detection
