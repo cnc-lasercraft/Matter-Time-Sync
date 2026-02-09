@@ -1,6 +1,5 @@
 """Button platform for Matter Time Sync."""
 from __future__ import annotations
-from homeassistant.helpers import device_registry as dr
 
 import asyncio
 import logging
@@ -11,6 +10,7 @@ from typing import Any
 from homeassistant.components.button import ButtonEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
@@ -49,11 +49,18 @@ def device_matches_filter(device_name: str, filters: list[str]) -> bool:
 
     return False
 
-def _find_matter_device_identifiers(hass: HomeAssistant, node_id: int) -> set[tuple[str, str]] | None:
+
+def _find_matter_device_identifiers(
+    hass: HomeAssistant,
+    node_id: int,
+) -> set[tuple[str, str]] | None:
     """Find the existing Matter device identifiers for a given node_id.
 
-    Looks for identifiers like:
-      ("matter", "deviceid_<FABRIC>-<NODEID_HEX>-MatterNodeDevice")
+    Home Assistant's Matter integration typically registers devices with identifiers like:
+      ("matter", "deviceid_<FABRIC_HEX>-<NODEID_HEX>-MatterNodeDevice")
+
+    We do not need to know the fabric id up-front. We simply scan the device registry
+    for any Matter identifier that contains the node_id in the expected hex format.
     """
     device_reg = dr.async_get(hass)
     needle = f"-{node_id:016X}-MatterNodeDevice"
@@ -63,10 +70,10 @@ def _find_matter_device_identifiers(hass: HomeAssistant, node_id: int) -> set[tu
             if domain != "matter":
                 continue
             if needle in ident:
-                # Return the exact identifier tuple set so HA merges into that device
                 return {(domain, ident)}
 
     return None
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -101,15 +108,18 @@ async def async_setup_entry(
             node.get("product_name", "?"),
         )
 
-    entities = []
-    skipped_filter = []
-    skipped_no_timesync = []
-    known_node_ids = set()
+    entities: list[MatterTimeSyncButton] = []
+    skipped_filter: list[str] = []
+    skipped_no_timesync: list[str] = []
+    known_node_ids: set[int] = set()
 
     for node in nodes:
         node_id = node.get("node_id")
         node_name = node.get("name", f"Matter Node {node_id}")
         has_time_sync = node.get("has_time_sync", False)
+
+        if node_id is None:
+            continue
 
         # Skip devices without Time Sync cluster (if option is enabled)
         if only_time_sync and not has_time_sync:
@@ -124,12 +134,16 @@ async def async_setup_entry(
         # Track this node as known
         known_node_ids.add(node_id)
 
+        # Try to attach the button entity to the existing Matter device in HA
+        matter_identifiers = _find_matter_device_identifiers(hass, node_id)
+
         entities.append(
             MatterTimeSyncButton(
                 coordinator=coordinator,
-                node_id=node["node_id"],
+                node_id=node_id,
                 node_name=node_name,
                 device_info=node.get("device_info"),
+                matter_identifiers=matter_identifiers,
             )
         )
 
@@ -202,10 +216,13 @@ async def async_check_new_devices(
     # Get current nodes
     nodes = await coordinator.async_get_matter_nodes()
 
-    new_entities = []
+    new_entities: list[MatterTimeSyncButton] = []
 
     for node in nodes:
         node_id = node.get("node_id")
+
+        if node_id is None:
+            continue
 
         # Skip already known nodes
         if node_id in known_node_ids:
@@ -229,12 +246,16 @@ async def async_check_new_devices(
 
         known_node_ids.add(node_id)
 
+        # Try to attach the button entity to the existing Matter device in HA
+        matter_identifiers = _find_matter_device_identifiers(hass, node_id)
+
         new_entities.append(
             MatterTimeSyncButton(
                 coordinator=coordinator,
                 node_id=node_id,
                 node_name=node_name,
                 device_info=node.get("device_info"),
+                matter_identifiers=matter_identifiers,
             )
         )
 
@@ -267,6 +288,7 @@ class MatterTimeSyncButton(ButtonEntity):
         node_id: int,
         node_name: str,
         device_info: dict | None = None,
+        matter_identifiers: set[tuple[str, str]] | None = None,
     ) -> None:
         """Initialize the button."""
         self._coordinator = coordinator
@@ -291,14 +313,19 @@ class MatterTimeSyncButton(ButtonEntity):
         # This helps get: button.alpstuga_sync_time instead of button.sync_time
         self.entity_id = f"button.{name_slug}_sync_time"
 
-        # Device info for proper device grouping in HA
+        # Attach to existing Matter device (preferred).
+        # If not found: do NOT create a new device (keeps the device list clean).
+        if matter_identifiers:
+            self._attr_device_info = DeviceInfo(identifiers=matter_identifiers)
+        else:
+            self._attr_device_info = None
+
+        # (Optional) keep some manufacturer/model info as attributes for debugging
+        self._vendor_name = None
+        self._product_name = None
         if device_info:
-            self._attr_device_info = DeviceInfo(
-                identifiers={(DOMAIN, str(node_id))},
-                name=node_name,
-                manufacturer=device_info.get("vendor_name", "Unknown"),
-                model=device_info.get("product_name", "Matter Device"),
-            )
+            self._vendor_name = device_info.get("vendor_name")
+            self._product_name = device_info.get("product_name") or device_info.get("product_name")
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
@@ -307,6 +334,8 @@ class MatterTimeSyncButton(ButtonEntity):
             "node_id": self._node_id,
             "device_name": self._node_name,
             "integration": DOMAIN,
+            "vendor_name": self._vendor_name,
+            "product_name": self._product_name,
         }
 
     async def async_press(self) -> None:
