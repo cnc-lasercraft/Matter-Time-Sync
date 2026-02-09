@@ -150,23 +150,29 @@ class MatterTimeSyncCoordinator:
                 return None
 
     def _get_ha_device_name(self, node_id: int) -> str | None:
-        """
-        Try to get the device name from Home Assistant's device registry.
-        This gets the user-defined name if the device was renamed in HA.
+        """Try to get the device name from Home Assistant's device registry.
+
+        This retrieves the user-defined name if the device was renamed in HA.
+
+        Matter devices are typically registered with identifiers like:
+          ("matter", "deviceid_<FABRIC_HEX>-<NODEID_HEX>-MatterNodeDevice")
+
+        So we match by searching for the node_id formatted as 16-digit hex inside
+        the identifier string.
         """
         try:
             device_reg = dr.async_get(self.hass)
+            needle = f"-{node_id:016X}-MatterNodeDevice"
+
             for device in device_reg.devices.values():
-                for identifier in device.identifiers:
-                    if identifier[0] != "matter":
+                for domain, ident in device.identifiers:
+                    if domain != "matter":
                         continue
 
-                    id_str = str(identifier[1])
-                    if (
-                        id_str == str(node_id)
-                        or id_str == f"deviceid_{node_id}"
-                        or id_str.endswith(f"_{node_id}")
-                    ):
+                    id_str = str(ident)
+
+                    # Preferred: match the standard Matter identifier format
+                    if needle in id_str:
                         if device.name_by_user:
                             _LOGGER.debug(
                                 "Found HA device name for node %s: %s (user-defined)",
@@ -176,11 +182,36 @@ class MatterTimeSyncCoordinator:
                             return device.name_by_user
                         if device.name:
                             _LOGGER.debug(
-                                "Found HA device name for node %s: %s", node_id, device.name
+                                "Found HA device name for node %s: %s",
+                                node_id,
+                                device.name,
                             )
                             return device.name
+
+                    # Legacy / fallback matching (kept for compatibility)
+                    if (
+                        id_str == str(node_id)
+                        or id_str == f"deviceid_{node_id}"
+                        or id_str.endswith(f"_{node_id}")
+                    ):
+                        if device.name_by_user:
+                            _LOGGER.debug(
+                                "Found HA device name for node %s: %s (user-defined, legacy match)",
+                                node_id,
+                                device.name_by_user,
+                            )
+                            return device.name_by_user
+                        if device.name:
+                            _LOGGER.debug(
+                                "Found HA device name for node %s: %s (legacy match)",
+                                node_id,
+                                device.name,
+                            )
+                            return device.name
+
         except Exception as err:
             _LOGGER.debug("Could not get HA device name: %s", err)
+
         return None
 
     async def async_get_matter_nodes(self) -> list[dict[str, Any]]:
