@@ -1,5 +1,6 @@
 """Button platform for Matter Time Sync."""
 from __future__ import annotations
+from homeassistant.helpers import device_registry as dr
 
 import asyncio
 import logging
@@ -48,6 +49,24 @@ def device_matches_filter(device_name: str, filters: list[str]) -> bool:
 
     return False
 
+def _find_matter_device_identifiers(hass: HomeAssistant, node_id: int) -> set[tuple[str, str]] | None:
+    """Find the existing Matter device identifiers for a given node_id.
+
+    Looks for identifiers like:
+      ("matter", "deviceid_<FABRIC>-<NODEID_HEX>-MatterNodeDevice")
+    """
+    device_reg = dr.async_get(hass)
+    needle = f"-{node_id:016X}-MatterNodeDevice"
+
+    for device_entry in device_reg.devices.values():
+        for domain, ident in device_entry.identifiers:
+            if domain != "matter":
+                continue
+            if needle in ident:
+                # Return the exact identifier tuple set so HA merges into that device
+                return {(domain, ident)}
+
+    return None
 
 async def async_setup_entry(
     hass: HomeAssistant,
