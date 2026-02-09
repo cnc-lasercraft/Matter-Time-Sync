@@ -79,5 +79,12 @@
       "name": "Geräte aktualisieren",
       "description": "Sucht nach neuen Matter-Geräten und erstellt automatisch Buttons für sie."
     }
+  },
+  "entity": {
+    "button": {
+      "sync_time": {
+        "name": "Zeit synchronisieren"
+      }
+    }
   }
 }
