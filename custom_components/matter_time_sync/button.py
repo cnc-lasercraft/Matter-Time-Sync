@@ -1,11 +1,9 @@
 """Button platform for Matter Time Sync.
 
-This version tries to *attach* the per-device Sync Time button to the **existing**
+This version attaches the per-device Sync Time button to the **existing**
 Matter device in Home Assistant (so it does NOT create extra devices).
 
-It does this by finding the Matter device-registry identifier for the node_id and
-using that identifier in DeviceInfo.identifiers, which causes HA to merge the entity
-into the existing device.
+It also uses Home Assistant's translation system for the button name.
 """
 from __future__ import annotations
 
@@ -28,7 +26,6 @@ _LOGGER = logging.getLogger(__name__)
 
 # Typical HA Matter identifier example:
 #   deviceid_<FABRIC_HEX>-<NODEID_HEX_16>-MatterNodeDevice
-# We parse node_id from that to be robust against minor formatting differences.
 _MATTER_ID_RE = re.compile(r"deviceid_[0-9A-Fa-f]+-([0-9A-Fa-f]{16})-MatterNodeDevice")
 
 
@@ -55,7 +52,6 @@ def _matter_device_identifiers_for_node(
     """Return the existing Matter device identifiers for a node_id, if found."""
     device_reg = dr.async_get(hass)
 
-    # Fast path: common needle match
     needle = f"-{node_id:016X}-MatterNodeDevice"
 
     for dev in device_reg.devices.values():
@@ -69,7 +65,7 @@ def _matter_device_identifiers_for_node(
             if needle in ident_str:
                 return {(domain, ident_str)}
 
-            # 2) Robust parse (regex) – handles cases where the substring format changes slightly
+            # 2) Robust parse (regex)
             m = _MATTER_ID_RE.search(ident_str)
             if m:
                 try:
@@ -124,13 +120,6 @@ async def async_setup_entry(
         known_node_ids.add(node_id)
 
         matter_identifiers = _matter_device_identifiers_for_node(hass, node_id)
-        if not matter_identifiers:
-            _LOGGER.debug(
-                "No existing Matter device found in HA for node_id=%s (%s). "
-                "Button will be created without a device (no extra device will be created). ",
-                node_id,
-                node_name,
-            )
 
         entities.append(
             MatterTimeSyncButton(
@@ -146,7 +135,9 @@ async def async_setup_entry(
         async_add_entities(entities)
         _LOGGER.info("Added %d Matter Time Sync buttons.", len(entities))
     else:
-        _LOGGER.warning("No Matter Time Sync buttons created (filtered out or no Time Sync support).")
+        _LOGGER.warning(
+            "No Matter Time Sync buttons created (filtered out or no Time Sync support)."
+        )
 
     entry_data["known_node_ids"] = known_node_ids
 
@@ -208,7 +199,9 @@ class MatterTimeSyncButton(ButtonEntity):
     """Button to sync time on a Matter device."""
 
     _attr_icon = "mdi:clock-sync"
-    _attr_has_entity_name = False
+    _attr_has_entity_name = True
+    _attr_translation_key = "sync_time"
+
     _PRESS_COOLDOWN_SECONDS = 2.0
 
     def __init__(
@@ -228,7 +221,6 @@ class MatterTimeSyncButton(ButtonEntity):
 
         name_slug = slugify(node_name)
         self._attr_unique_id = f"matter_time_sync_{node_id}"
-        self._attr_name = f"{node_name} Sync Time"
 
         # NOTE: setting entity_id directly is generally discouraged, but keeping
         # the original behavior for now.
