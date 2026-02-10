@@ -21,6 +21,10 @@ from .const import (
     TIME_SYNC_CLUSTER_ID,
 )
 
+# New (local) option key: which field(s) the device_filter should match against.
+CONF_FILTER_TARGET = "filter_target"
+DEFAULT_FILTER_TARGET = "any"  # any | display_name | ha_name | matter
+
 _LOGGER = logging.getLogger(__name__)
 
 # Matter/CHIP epoch used by Time Synchronization cluster (microseconds since 2000-01-01)
@@ -542,27 +546,61 @@ class MatterTimeSyncCoordinator:
             )
             return True
 
+
+    def _normalize_terms(self, device_filter: str) -> list[str]:
+        """Split comma-separated filter string into normalized terms."""
+        return [t.strip().lower() for t in (device_filter or "").split(",") if t.strip()]
+
+    def _filter_candidates_for_node(self, node: dict[str, Any], filter_target: str) -> list[str]:
+        """Return candidate strings for matching device_filter."""
+        node_name = node.get("name") or ""
+        name_source = node.get("name_source") or ""
+        product_name = node.get("product_name") or ""
+        node_label = (node.get("device_info") or {}).get("node_label", "") or ""
+
+        if filter_target == "display_name":
+            return [node_name]
+        if filter_target == "ha_name":
+            return [node_name] if name_source == "home_assistant" else []
+        if filter_target == "matter":
+            candidates = [product_name, node_label]
+            if name_source in ("node_label", "product_name"):
+                candidates.append(node_name)
+            return candidates
+
+        # any (default)
+        return [node_name, product_name, node_label]
+
+    def _matches_filter(self, terms: list[str], candidates: list[str]) -> bool:
+        """Return True if any term matches any candidate."""
+        if not terms:
+            return True
+        haystacks = [c.lower() for c in candidates if c]
+        return any(term in h for term in terms for h in haystacks)
+
     async def async_sync_all_devices(self) -> None:
         """Sync time on all filtered devices."""
         nodes = await self.async_get_matter_nodes()
 
-        device_filters = self.entry.data.get("device_filter", "")
-        device_filters = [t.strip().lower() for t in device_filters.split(",") if t.strip()]
+        device_filter_str = self.entry.data.get("device_filter", "")
+        terms = self._normalize_terms(device_filter_str)
         only_time_sync = self.entry.data.get("only_time_sync_devices", True)
+        filter_target = self.entry.data.get(CONF_FILTER_TARGET, DEFAULT_FILTER_TARGET)
 
         count = 0
         for node in nodes:
             node_id = node.get("node_id")
-            node_name = node.get("name", f"Node {node_id}")
-            has_time_sync = node.get("has_time_sync", False)
-
-            if only_time_sync and not has_time_sync:
+            if node_id is None:
                 continue
 
-            if device_filters and not any(term in node_name.lower() for term in device_filters):
+            if only_time_sync and not node.get("has_time_sync", False):
                 continue
 
-            _LOGGER.info("Auto-syncing node %s", node_id)
+            candidates = self._filter_candidates_for_node(node, filter_target)
+            if not self._matches_filter(terms, candidates):
+                continue
+
+            _LOGGER.info("Auto-syncing node %s (%s)", node_id, node.get("name", "?"))
             await self.async_sync_time(node_id)
             count += 1
 
